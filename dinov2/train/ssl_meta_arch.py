@@ -8,6 +8,7 @@ import logging
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from dinov2.loss import DINOLoss, iBOTPatchLoss, KoLeoLoss
 from dinov2.models import build_model_from_cfg
@@ -45,7 +46,55 @@ class SSLMetaArch(nn.Module):
         if cfg.student.pretrained_weights:
             chkpt = torch.load(cfg.student.pretrained_weights)
             logger.info(f"OPTIONS -- pretrained weights: loading from {cfg.student.pretrained_weights}")
-            student_backbone.load_state_dict(chkpt["model"], strict=False)
+
+            # Interpolate positional encodings to match model size
+            if "pos_embed" in chkpt and chkpt["pos_embed"].shape != student_backbone.pos_embed.shape:
+                logger.info("Positional embedding shape mismatch. Attempting to interpolate.")
+                pos_embed_checkpoint = chkpt["pos_embed"]
+
+                # Get the expected number of patches from the current student model
+                num_patches = student_backbone.pos_embed.shape[-1] - 1
+                # Get the number of patches from the pretrain model
+                num_patches_pretrain = pos_embed_checkpoint.shape[1] -1
+
+                # from 1369(37*37) patches interpolate to 256(16*16) patches
+                global_patch_size_pretrain = int(num_patches_pretrain ** 0.5)
+                global_patch_size_curr = int(num_patches ** 0.5)
+                assert global_patch_size_pretrain ** 2 == num_patches_pretrain, f"pos embedding shape mismatch: {num_patches_pretrain} != {num_patches}"
+                assert global_patch_size_curr ** 2 == num_patches, f"pos embedding shape mismatch: {num_patches} != {num_patches}"
+
+                logger.info(f"Interpolating positional embedding from {global_patch_size_pretrain} x {global_patch_size_pretrain} to {global_patch_size_curr} x {global_patch_size_curr}.")
+
+                # Separate the positional embedding of the cls token
+                pos_embed_cls = pos_embed_checkpoint[:, 0:1, :]
+
+                # Get the patch positional embedding
+                patch_pos_embed = pos_embed_checkpoint[:, 1:, :]
+
+                # Reshape into 2d network for interpolation
+                dim = pos_embed_checkpoint.shape[-1]
+                h_pre = w_pre = int(num_patches_pretrain ** 0.5)
+                patch_pos_embed = patch_pos_embed.reshape(1, h_pre, w_pre, dim).permute(0, 3, 1, 2)
+
+                h_new = w_new = int(num_patches ** 0.5)
+
+                # Perform bicubic interpolation
+                patch_pos_embed = F.interpolate(
+                    patch_pos_embed,
+                    size = (h_new, w_new),
+                    mode = "bicubic",
+                    align_corners = False
+                )
+
+                # Reshape and concatenate with the positional encoding of the cls token
+                patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, -1, dim)
+                new_pos_embed = torch.cat([pos_embed_cls, patch_pos_embed], dim = 1)
+
+                # Update the positional embedding in checkpoint
+                chkpt["pos_embed"] = new_pos_embed
+
+            # student_backbone.load_state_dict(chkpt["model"], strict=False)
+            student_backbone.load_state_dict(chkpt, strict = False)
 
         self.embed_dim = embed_dim
         self.dino_out_dim = cfg.dino.head_n_prototypes
