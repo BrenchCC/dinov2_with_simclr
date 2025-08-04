@@ -4,6 +4,7 @@ import logging
 from enum import Enum
 from typing import Union, Callable, Optional
 import numpy as np
+import pyarrow.fs as FileSystem
 
 
 from .extended import ExtendedVisionDataset
@@ -41,6 +42,7 @@ class BrenchDataResourceDataset(ExtendedVisionDataset):
             transforms: Optional[Callable] = None,
             transform: Optional[Callable] = None,
             target_transform: Optional[Callable] = None,
+            hdfs_load: bool = False,
     ) -> None:
         super().__init__(root, transforms, transform, target_transform)
         self._extra_root = extra
@@ -49,6 +51,11 @@ class BrenchDataResourceDataset(ExtendedVisionDataset):
         self._entries = None
         self._class_ids = None
         self._class_name = None
+        self.hdfs_load = hdfs_load
+        if hdfs_load:
+            self._hdfs_client, _ = FileSystem.from_uri("hdfs://haruna/home/")
+        else:
+            self._hdfs_client = None
 
     def __len__(self) -> int:
         return len(self._get_entries())
@@ -100,8 +107,12 @@ class BrenchDataResourceDataset(ExtendedVisionDataset):
         entries = self._get_entries()
         image_relpath = entries[index]["image_relpath"]
         image_full_path = os.path.join(self.root, image_relpath)
-        with open(image_full_path, mode = "rb") as f:
-            image_data = f.read()
+        if self._hdfs_client:
+            with self._hdfs_client.open_input_file(image_relpath) as f:
+                return f.read()
+        else:
+            with open(image_full_path, mode = "rb") as f:
+                image_data = f.read()
         return image_data
 
     def get_target(self, index: int) -> Optional[_Target]:
@@ -123,18 +134,27 @@ class BrenchDataResourceDataset(ExtendedVisionDataset):
         """
         collects relative path of all images, save to entries-<SPLIT>.npy
         """
-        images_dir = os.path.join(
-            self._root,
-            self.split.get_dirname(),
-            "images",
-        )
+        if self._hdfs_load:
+            images_path_fp = os.path.join(self.root, self.split.get_dirname(), "frame_hdfs_path.txt")
+            rel_paths = []
+            with open(images_path_fp, "r") as f:
+                for line in f:
+                    # rel_path is absolute hdfs_path in this case
+                    rel_paths.append(line.strip())
 
-        # Store the same format with origin; related to root: relative path
-        rel_paths = []
-        for fname in sorted(os.listdir(images_dir)):
-            if not fname.lower().endswith((".jpg", ".jpeg", ".png")):
-                continue
-            rel = os.path.join(self.split.get_dirname(), "images", fname)
+        else:
+            images_dir = os.path.join(
+                self._root,
+                self.split.get_dirname(),
+                "images",
+            )
+
+            # Store the same format with origin; related to root: relative path
+            rel_paths = []
+            for fname in sorted(os.listdir(images_dir)):
+                if not fname.lower().endswith((".jpg", ".jpeg", ".png")):
+                    continue
+                rel = os.path.join(self.split.get_dirname(), "images", fname)
             rel_paths.append(rel)
 
         # Since there are no real labels, just assign a dummy class_index 0 for all samples
@@ -171,15 +191,17 @@ class BrenchDataResourceDataset(ExtendedVisionDataset):
         self._dump_calss_ids_and_names()
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python -m dinov2.data.datasets.brench_data_resource /path/to/your/data")
+    if len(sys.argv) != 3:
+        print("Usage: python -m dinov2.data.datasets.brench_data_resource /path/to/your/data true/false")
         sys.exit(1)
 
     root = sys.argv[1]
+    hdfs_load_str = sys.argv[2]
     extra_dir = os.path.join(root, "extra")
+    hdfs_load = True if hdfs_load_str.lower() == "true" else False
 
     for split in (BrenchDataResourceDataset.Split.TRAIN, BrenchDataResourceDataset.Split.VAL):
         logger.info(f"Dumping extra files for {split.value} split ...")
-        dataset = BrenchDataResourceDataset(root = root, split = split, extra = extra_dir)
+        dataset = BrenchDataResourceDataset(root = root, split = split, extra = extra_dir, hdfs_load = hdfs_load)
         dataset.dump_extra()
     print("✅ all extra files are ready in <root>/extra")

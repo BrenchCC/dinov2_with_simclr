@@ -49,7 +49,7 @@ def _parse_dataset_str(dataset_str: str):
 
     for token in tokens[1:]:
         key, value = token.split("=")
-        assert key in ("root", "extra", "split")
+        assert key in ("root", "extra", "split", "hdfs_load")
         kwargs[key] = value
 
     if name == "ImageNet":
@@ -62,6 +62,10 @@ def _parse_dataset_str(dataset_str: str):
         class_ = BrenchDataResourceDataset
         if "split" in kwargs:
             kwargs["split"] = BrenchDataResourceDataset.Split[kwargs["split"]]
+        if "hdfs_load" in kwargs:
+            kwargs["hdfs_load"] = True if kwargs["hdfs_load"].lower() == "true" else False
+        else:
+            kwargs["hdfs_load"] = False
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 
