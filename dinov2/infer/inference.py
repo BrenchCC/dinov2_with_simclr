@@ -23,7 +23,7 @@ def init_distributed(description):
     # 从环境变量获取 local_rank（适配 torchrun）
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    print("Local RRRRRRRRRRR", local_rank, world_size)
+    print("Local:", local_rank, world_size)
 
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend='nccl', init_method='env://')
