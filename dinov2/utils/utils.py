@@ -8,11 +8,10 @@ import os
 import random
 import subprocess
 from urllib.parse import urlparse
-
 import numpy as np
 import torch
 from torch import nn
-
+import torch.nn.functional as F
 
 logger = logging.getLogger("dinov2")
 
@@ -29,6 +28,52 @@ def load_pretrained_weights(model, pretrained_weights, checkpoint_key):
     state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
     # remove `backbone.` prefix induced by multicrop wrapper
     state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
+
+    # Interpolate positional encodings to match model size
+    if "pos_embed" in state_dict and state_dict["pos_embed"].shape != model.pos_embed.shape:
+        logger.info("Positional embedding shape mismatch. Attempting to interpolate.")
+        pos_embed_checkpoint = state_dict["pos_embed"]
+
+        # Get the expected number of patches from the current student model
+        num_patches = model.pos_embed.shape[1] - 1
+        # Get the number of patches from the pretrain model
+        num_patches_pretrain = pos_embed_checkpoint.shape[1] - 1
+        # from 1369(37*37) patches interpolate to 256(16*16) patches
+        global_patch_size_pretrain = int(num_patches_pretrain ** 0.5)
+        global_patch_size_curr = int(num_patches ** 0.5)
+        assert global_patch_size_pretrain ** 2 == num_patches_pretrain, f"pos emb shape for pretrained model is not perfect square"
+        assert global_patch_size_curr ** 2 == num_patches, f"pos emb shape for current model is not perfect square"
+        logger.info(
+            f"Interpolating positional embedding from {global_patch_size_pretrain}x{global_patch_size_pretrain} to {global_patch_size_curr}x{global_patch_size_curr}.")
+
+        # Separate the positional embedding of the cls token
+        pos_embed_cls = pos_embed_checkpoint[:, 0:1, :]
+
+        # Get the patch positional embedding(expect cls)
+        patch_pos_embed = pos_embed_checkpoint[:, 1:, :]
+
+        # Reshape into 2d network for interpolation
+        dim = pos_embed_checkpoint.shape[-1]
+        h_pre = w_pre = int(num_patches_pretrain ** 0.5)
+        patch_pos_embed = patch_pos_embed.reshape(1, h_pre, w_pre, dim).permute(0, 3, 1, 2)
+
+        h_new = w_new = int(num_patches ** 0.5)
+
+        # Perform bicubic interpolation
+        patch_pos_embed = F.interpolate(
+            patch_pos_embed,
+            size=(h_new, w_new),
+            mode="bicubic",
+            align_corners=False,
+        )
+
+        # Reshape and concatenate with the positional encoding of the cls token
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, -1, dim)
+        new_pos_embed = torch.cat((pos_embed_cls, patch_pos_embed), dim=1)
+
+        # Update the positional embedding in checkpoint
+        state_dict["pos_embed"] = new_pos_embed
+
     msg = model.load_state_dict(state_dict, strict=False)
     logger.info("Pretrained weights found at {} and loaded with msg: {}".format(pretrained_weights, msg))
 

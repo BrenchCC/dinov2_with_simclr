@@ -47,7 +47,9 @@ def get_cfg_from_args(args):
 
 
 def default_setup(args):
-    distributed.enable(overwrite=True)
+    if distributed.get_global_rank() < 0:
+        distributed.enable(overwrite=True)
+    # distributed.enable(overwrite=True)
     seed = getattr(args, "seed", 0)
     rank = distributed.get_global_rank()
 
