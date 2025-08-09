@@ -36,9 +36,9 @@ def plot_loss_comparison(file_path1, file_path2, out_fp):
     plt.close()
 
 if __name__ == "__main__":
-    fp1 = "demo1/training_metrics.json"
-    fp2 = "demo2/training_metrics.json"
-    out_fp = "./total_loss.png"
+    fp1 = "/path/to/training_metrics.json"
+    fp2 = "/path/to/training_metrics.json"
+    out_fp = "/path/to/output_total_loss.png"
     plot_loss_comparison(fp1, fp2, out_fp)
 
 
