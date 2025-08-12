@@ -5,4 +5,5 @@
 
 from .image_net import ImageNet
 from .image_net_22k import ImageNet22k
-from .brench_data_resource import BrenchDataResourceDataset
+from .entity_resource import EntityResource
+from .entity_resource_for_simclr import EntityResourceForSimCLR

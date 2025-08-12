@@ -69,6 +69,14 @@ def free_if_fsdp(x):
         _reshard(x, handles, true_list)
 
 
+# def free_if_fsdp(x):
+#     if isinstance(x, FSDP):
+#         # 判断是否处于 FULL_SHARD 策略下（参数在 forward/backward 之外时是 shard 状态）
+#         if x.sharding_strategy == ShardingStrategy.FULL_SHARD:
+#             # 执行 reshard，即释放 unsharded parameters
+#             x.reshard_parameters_()
+
+
 def get_fsdp_modules(x):
     return FSDP.fsdp_modules(x)
 

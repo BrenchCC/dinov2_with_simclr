@@ -328,7 +328,66 @@ class DinoVisionTransformer(nn.Module):
             return ret
         else:
             return self.head(ret["x_norm_clstoken"])
+        
 
+class DinoVisionTransformerWithMLP(nn.Module):
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        in_chans=3,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4.0,
+        qkv_bias=True,
+        ffn_bias=True,
+        proj_bias=True,
+        drop_path_rate=0.0,
+        drop_path_uniform=False,
+        init_values=None,  # for layerscale: None or 0 => no layerscale
+        embed_layer=PatchEmbed,
+        act_layer=nn.GELU,
+        block_fn=Block,
+        ffn_layer="mlp",
+        block_chunks=1,
+        num_register_tokens=0,
+        interpolate_antialias=False,
+        interpolate_offset=0.1,
+        out_dim=128
+        ):
+        super().__init__()
+        self.backbone = DinoVisionTransformer(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_chans=in_chans,
+            embed_dim=embed_dim,
+            depth=depth,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            qkv_bias=qkv_bias,
+            ffn_bias=ffn_bias,
+            proj_bias=proj_bias,
+            drop_path_rate=drop_path_rate,
+            drop_path_uniform=drop_path_uniform,
+            init_values=init_values,  # for layerscale: None or 0 => no layerscale
+            embed_layer=embed_layer,
+            act_layer=act_layer,
+            block_fn=block_fn,
+            ffn_layer=ffn_layer,
+            block_chunks=block_chunks,
+            num_register_tokens=num_register_tokens,
+            interpolate_antialias=interpolate_antialias,
+            interpolate_offset=interpolate_offset
+        )
+        for p in self.backbone.parameters():
+            p.requires_grad = False
+        self.mlp = nn.Sequential(nn.Linear(embed_dim, embed_dim), nn.ReLU(), nn.Linear(embed_dim, out_dim))
+
+    def forward(self, *args, **kwargs):
+        backbone_emb = self.backbone(*args, is_training=False, **kwargs)
+        out = self.mlp(backbone_emb)
+        return out
 
 def init_weights_vit_timm(module: nn.Module, name: str = ""):
     """ViT weight initialization, original timm impl (for reproducibility)"""
@@ -392,6 +451,21 @@ def vit_giant2(patch_size=16, num_register_tokens=0, **kwargs):
         mlp_ratio=4,
         block_fn=partial(Block, attn_class=MemEffAttention),
         num_register_tokens=num_register_tokens,
+        **kwargs,
+    )
+    return model
+
+
+def vit_giant2_with_mlp(patch_size=16, num_register_tokens=0, out_dim=128, **kwargs):
+    model = DinoVisionTransformerWithMLP(
+        patch_size=patch_size,
+        embed_dim=1536,
+        depth=40,
+        num_heads=24,
+        mlp_ratio=4,
+        block_fn=partial(Block, attn_class=MemEffAttention),
+        num_register_tokens=num_register_tokens,
+        out_dim=out_dim,
         **kwargs,
     )
     return model

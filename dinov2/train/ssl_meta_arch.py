@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from dinov2.loss import DINOLoss, iBOTPatchLoss, KoLeoLoss
 from dinov2.models import build_model_from_cfg
 from dinov2.layers import DINOHead
-from dinov2.utils.utils import has_batchnorms
+from dinov2.utils.utils import has_batchnorms, rewrite_pretrained_ckpt_keys
 from dinov2.utils.param_groups import get_params_groups_with_decay, fuse_params_groups
 from dinov2.fsdp import get_fsdp_wrapper, ShardedGradScaler, get_fsdp_modules, reshard_fsdp_model
 
@@ -45,56 +45,57 @@ class SSLMetaArch(nn.Module):
 
         if cfg.student.pretrained_weights:
             chkpt = torch.load(cfg.student.pretrained_weights)
+            # rewrite pretrained ckpt keys if loading meta released pretrained ckpt.
+            if cfg.student.pretrained_weights.split("/")[-1].endswith("pretrain.pth"):
+                chkpt = rewrite_pretrained_ckpt_keys(chkpt)
             logger.info(f"OPTIONS -- pretrained weights: loading from {cfg.student.pretrained_weights}")
-
-            # Interpolate positional encodings to match model size
+            # 对位置编码进行插值以匹配模型尺寸
             if "pos_embed" in chkpt and chkpt["pos_embed"].shape != student_backbone.pos_embed.shape:
                 logger.info("Positional embedding shape mismatch. Attempting to interpolate.")
                 pos_embed_checkpoint = chkpt["pos_embed"]
+                
+                # 从当前学生模型获取期望的 patch 数量
+                num_patches = student_backbone.pos_embed.shape[1] - 1
+                # 从预训练权重获取 patch 数量
+                num_patches_pretrain = pos_embed_checkpoint.shape[1] - 1
 
-                # Get the expected number of patches from the current student model
-                num_patches = student_backbone.pos_embed.shape[-1] - 1
-                # Get the number of patches from the pretrain model
-                num_patches_pretrain = pos_embed_checkpoint.shape[1] -1
+                global_patch_size_pretrain = int(num_patches_pretrain**0.5)
+                global_patch_size_curr = int(num_patches**0.5)
+                assert global_patch_size_pretrain ** 2 == num_patches_pretrain, f"pos emb shape for pretrained model is not perfect square"
+                assert global_patch_size_curr ** 2 == num_patches, f"pos emb shape for current model is not perfect square"
 
-                # from 1369(37*37) patches interpolate to 256(16*16) patches
-                global_patch_size_pretrain = int(num_patches_pretrain ** 0.5)
-                global_patch_size_curr = int(num_patches ** 0.5)
-                assert global_patch_size_pretrain ** 2 == num_patches_pretrain, f"pos embedding shape mismatch: {num_patches_pretrain} != {num_patches}"
-                assert global_patch_size_curr ** 2 == num_patches, f"pos embedding shape mismatch: {num_patches} != {num_patches}"
-
-                logger.info(f"Interpolating positional embedding from {global_patch_size_pretrain} x {global_patch_size_pretrain} to {global_patch_size_curr} x {global_patch_size_curr}.")
-
-                # Separate the positional embedding of the cls token
+                logger.info(f"Interpolating positional embedding from {global_patch_size_pretrain}x{global_patch_size_pretrain} to {global_patch_size_curr}x{global_patch_size_curr}.")
+                
+                # 分离 CLS token 的位置编码
                 pos_embed_cls = pos_embed_checkpoint[:, 0:1, :]
-
-                # Get the patch positional embedding
+                
+                # 获取 patch 的位置编码 (除去 CLS token)
                 patch_pos_embed = pos_embed_checkpoint[:, 1:, :]
-
-                # Reshape into 2d network for interpolation
+                
+                # 重塑为 2D 网格以进行插值
                 dim = pos_embed_checkpoint.shape[-1]
-                h_pre = w_pre = int(num_patches_pretrain ** 0.5)
+                h_pre = w_pre = int(num_patches_pretrain**0.5)
                 patch_pos_embed = patch_pos_embed.reshape(1, h_pre, w_pre, dim).permute(0, 3, 1, 2)
-
-                h_new = w_new = int(num_patches ** 0.5)
-
-                # Perform bicubic interpolation
+                
+                h_new = w_new = int(num_patches**0.5)
+                
+                # 执行双三次插值
                 patch_pos_embed = F.interpolate(
                     patch_pos_embed,
-                    size = (h_new, w_new),
-                    mode = "bicubic",
-                    align_corners = False
+                    size=(h_new, w_new),
+                    mode="bicubic",
+                    align_corners=False,
                 )
-
-                # Reshape and concatenate with the positional encoding of the cls token
+                
+                # 重塑并与 CLS token 的位置编码拼接
                 patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).reshape(1, -1, dim)
-                new_pos_embed = torch.cat([pos_embed_cls, patch_pos_embed], dim = 1)
-
-                # Update the positional embedding in checkpoint
+                new_pos_embed = torch.cat((pos_embed_cls, patch_pos_embed), dim=1)
+                
+                # 更新 checkpoint 中的位置编码
                 chkpt["pos_embed"] = new_pos_embed
-
+            
             # student_backbone.load_state_dict(chkpt["model"], strict=False)
-            student_backbone.load_state_dict(chkpt, strict = False)
+            student_backbone.load_state_dict(chkpt, strict=True)
 
         self.embed_dim = embed_dim
         self.dino_out_dim = cfg.dino.head_n_prototypes
@@ -397,9 +398,9 @@ class SSLMetaArch(nn.Module):
     def fsdp_synchronize_streams(self):
         if self.need_to_synchronize_fsdp_streams:
             torch.cuda.synchronize()
-            self.student.dino_head._streams = (
-                self.teacher.dino_head._streams
-            ) = self.student.backbone._streams = self.teacher.backbone._streams
+            # self.student.dino_head._streams = (
+            #     self.teacher.dino_head._streams
+            # ) = self.student.backbone._streams = self.teacher.backbone._streams
             self.need_to_synchronize_fsdp_streams = False
 
     def update_teacher(self, m):

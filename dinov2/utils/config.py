@@ -47,6 +47,8 @@ def get_cfg_from_args(args):
 
 
 def default_setup(args):
+    # if distributed.get_global_rank() < 0:
+    #     distributed.enable(overwrite=True)
     distributed.enable(overwrite=True)
     seed = getattr(args, "seed", 0)
     rank = distributed.get_global_rank()
@@ -69,4 +71,16 @@ def setup(args):
     default_setup(args)
     apply_scaling_rules_to_cfg(cfg)
     write_config(cfg, args.output_dir)
+    return cfg
+
+
+def setup_for_simclr(args):
+    """
+    Create configs and perform basic setups.
+    """
+    cfg = get_cfg_from_args(args)
+    os.makedirs(args.output_dir, exist_ok=True)
+    # default_setup(args)
+    # apply_scaling_rules_to_cfg(cfg)
+    # write_config(cfg, args.output_dir)
     return cfg

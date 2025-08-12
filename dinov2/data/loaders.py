@@ -10,7 +10,7 @@ from typing import Any, Callable, List, Optional, TypeVar
 import torch
 from torch.utils.data import Sampler
 
-from .datasets import ImageNet, ImageNet22k, BrenchDataResourceDataset
+from .datasets import ImageNet, ImageNet22k, EntityResource
 from .samplers import EpochSampler, InfiniteSampler, ShardedInfiniteSampler
 
 
@@ -49,7 +49,7 @@ def _parse_dataset_str(dataset_str: str):
 
     for token in tokens[1:]:
         key, value = token.split("=")
-        assert key in ("root", "extra", "split", "hdfs_load")
+        assert key in ("root", "extra", "split", "hdfs_load", "tos_load", "tos_config_path")
         kwargs[key] = value
 
     if name == "ImageNet":
@@ -58,14 +58,22 @@ def _parse_dataset_str(dataset_str: str):
             kwargs["split"] = ImageNet.Split[kwargs["split"]]
     elif name == "ImageNet22k":
         class_ = ImageNet22k
-    elif name == "BrenchDataResourceDataset":
-        class_ = BrenchDataResourceDataset
+    elif name == "EntityResource":
+        class_ = EntityResource
         if "split" in kwargs:
-            kwargs["split"] = BrenchDataResourceDataset.Split[kwargs["split"]]
+            kwargs["split"] = EntityResource.Split[kwargs["split"]]
         if "hdfs_load" in kwargs:
             kwargs["hdfs_load"] = True if kwargs["hdfs_load"].lower() == "true" else False
         else:
             kwargs["hdfs_load"] = False
+        if "tos_load" in kwargs:
+            kwargs["tos_load"] = True if kwargs["tos_load"].lower() == "true" else False
+        else:
+            kwargs["tos_load"] = False
+        if "tos_config_path" in kwargs:
+            kwargs["tos_config_path"] = kwargs["tos_config_path"]
+        else:
+            kwargs["tos_config_path"] = None
     else:
         raise ValueError(f'Unsupported dataset "{name}"')
 
