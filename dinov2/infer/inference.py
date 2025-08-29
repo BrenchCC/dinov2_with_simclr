@@ -3,6 +3,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
 import os
+import json
 
 import io
 
@@ -20,6 +21,7 @@ from dinov2.eval.utils import ModelWithNormalize
 from dinov2.models.vision_transformer import vit_giant2_with_mlp
 from dinov2.utils.config import setup_for_simclr
 from dinov2.utils.config import default_setup
+from dinov2.data.tos_client import TosClient
 
 import logging
 
@@ -31,6 +33,8 @@ def parse_args(description):
     args_parser.add_argument('--label_out_fp', type=str, default='labels.txt', help='path to label.pth')
     args_parser.add_argument('--model_type', type=str, default='dinov2', choices=['dinov2', 'dinov2_mlp'], help='type of model')
     args_parser.add_argument('--out_dim', type=int, default=128, help='output dimension of the model')
+
+    args_parser.add_argument('--tos_config_fp', type=str, default="", help='path to file with tos config')
     
     
     args = args_parser.parse_args()
@@ -42,11 +46,17 @@ def parse_args(description):
     # return local_rank, world_size, args
     return args
 
-class HDFSDataset(Dataset):
-    def __init__(self, filepaths, transform):
+class FrameDataset(Dataset):
+    def __init__(self, filepaths, transform, tos_cofig_fp):
         self.filepaths = filepaths
         self.transform = transform
         self.hdfs_client, _ = FileSystem.from_uri('hdfs://haruna/home/')
+        if tos_cofig_fp:
+            with open(tos_cofig_fp, "r") as f:
+                tos_config = json.load(f)
+            self._tos_client = TosClient(**tos_config)
+        else:
+            self._tos_client = None
 
     def __len__(self):
         return len(self.filepaths)
@@ -66,6 +76,16 @@ class HDFSDataset(Dataset):
                 image = Image.open(io.BytesIO(image_data)).convert('RGB')
             except Exception as e:
                 print(f"Load image error {e}")
+                random_array = np.random.randint(0, 256, size=(720, 960, 3), dtype=np.uint8)
+                random_image = Image.fromarray(random_array, mode='RGB')
+                return self.transform(random_image), "NULL"
+        elif self._tos_client:
+            image_dict = json.loads(image_path)
+            _, image_data = self._tos_client.download_file(image_dict)
+            try:
+                image = Image.open(io.BytesIO(image_data)).convert('RGB')
+            except Exception as e:
+                print(f"Load tos image error {e}, use random generated images")
                 random_array = np.random.randint(0, 256, size=(720, 960, 3), dtype=np.uint8)
                 random_image = Image.fromarray(random_array, mode='RGB')
                 return self.transform(random_image), "NULL"
@@ -143,7 +163,11 @@ def main():
         logger.info(f"总样本数: {len(filepaths)}")
         logger.info(f"使用GPU数量: {world_size}")
     # change image_resize to global size. default is 224
-    dataset = HDFSDataset(filepaths, make_classification_eval_transform(resize_size=cfg.crops.global_crops_size, crop_size=cfg.crops.global_crops_size))
+    dataset = FrameDataset(
+        filepaths, 
+        make_classification_eval_transform(resize_size=cfg.crops.global_crops_size, crop_size=cfg.crops.global_crops_size),
+        args.tos_config_fp
+    )
     sampler = DistributedSampler(dataset, shuffle=False)
     loader = DataLoader(dataset, batch_size=32, sampler=sampler, 
                         num_workers=4, pin_memory=True)
