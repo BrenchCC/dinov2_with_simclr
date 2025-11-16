@@ -28,6 +28,9 @@ import logging
 # 初始化分布式环境
 def parse_args(description):
     args_parser = get_setup_args_parser(description=description)
+
+    args_parser.add_argument('--bs', type=int, default=256, help='batch_size')
+    
     args_parser.add_argument('--images_fp', type=str, default="", help='path to file with all image filepaths')
     args_parser.add_argument('--emb_out_fp', type=str, default='embeddings.pth', help='path to embedding.pth')
     args_parser.add_argument('--label_out_fp', type=str, default='labels.txt', help='path to label.pth')
@@ -169,7 +172,7 @@ def main():
         args.tos_config_fp
     )
     sampler = DistributedSampler(dataset, shuffle=False)
-    loader = DataLoader(dataset, batch_size=32, sampler=sampler, 
+    loader = DataLoader(dataset, batch_size=args.bs, sampler=sampler, 
                         num_workers=4, pin_memory=True)
 
     # 分布式推理（保持原修改，确保embedding实时转移到CPU）
@@ -224,7 +227,9 @@ def main():
         for i in range(world_size):
             os.remove(f"local_emb_{i}.pth")
             os.remove(f"local_labels_{i}.txt")
-
+    
+    # 避免其他进程等待造成NCCL error
+    dist.barrier()
 
 if __name__ == "__main__":
     """

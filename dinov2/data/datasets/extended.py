@@ -25,7 +25,10 @@ class ExtendedVisionDataset(VisionDataset):
             image_data = self.get_image_data(index)
             image = ImageDataDecoder(image_data).decode()
         except Exception as e:
-            raise RuntimeError(f"can not read image for sample {index}") from e
+            # raise RuntimeError(f"can not read image for sample {index}") from e
+            print(f"can not read image for sample {index}")
+            image_data = self.get_image_data(0)  # use first sample.
+            image = ImageDataDecoder(image_data).decode()
         target = self.get_target(index)
         target = TargetDecoder(target).decode()
 

@@ -151,7 +151,7 @@ class EntityResource(ExtendedVisionDataset):
                 for line in f:
                     rel_paths.append(line.strip())  # rel_path is absolute hdfs path in this case.
         elif self._tos_client:
-            images_path_fp = os.path.join(self.root, self.split.get_dirname(), "frame_path.jsonl")
+            images_path_fp = os.path.join(self.root, self.split.get_dirname(), "frame_tos_path.jsonl")
             rel_paths = []
             with open(images_path_fp, "r") as f:
                 for line in f:
@@ -169,7 +169,7 @@ class EntityResource(ExtendedVisionDataset):
         # Since there are no real labels, we assign a dummy class_index 0 to all samples.
         dtype = np.dtype(
             [
-                ("image_relpath", "U256"),  # Using a fixed-size string for paths
+                ("image_relpath", "U1024"),  # Using a fixed-size string for paths
                 ("class_index", "<u4"),
             ]
         )
